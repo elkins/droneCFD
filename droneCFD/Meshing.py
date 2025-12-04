@@ -1,3 +1,16 @@
+"""
+Meshing module for droneCFD.
+
+This module handles the mesh generation process for OpenFOAM simulations,
+including blockMesh for the base domain and snappyHexMesh for geometry refinement.
+
+Classes:
+    mesher: Manages mesh generation for CFD simulations.
+
+Functions:
+    which: Locates executable programs in the system PATH.
+"""
+
 ##########################################################################################
 ##  _______  .______        ______   .__   __.  _______      ______  _______  _______   ##
 ## |       \ |   _  \      /  __  \  |  \ |  | |   ____|    /      ||   ____||       \  ##
@@ -7,19 +20,35 @@
 ## |_______/ | _| `._____| \______/  |__| \__| |_______|    \______||__|     |_______/  ##
 ##                                                                                      ##
 ##########################################################################################
+
 __author__ = 'chrispaulson'
 
 import os
+import math
+from pathlib import Path
+from typing import Optional
 import numpy as np
 from PyFoam.RunDictionary.ParsedParameterFile import ParsedParameterFile
 from PyFoam.Applications.Runner import Runner
 from PyFoam.Applications.MeshUtilityRunner import MeshUtilityRunner
-import Utilities
-import math
+from . import Utilities
 
-def which(program):
-    ## Taken from harmv's stackoverflow answer (http://stackoverflow.com/questions/377017/test-if-executable-exists-in-python)
-    def is_exe(fpath):
+
+def which(program: str) -> Optional[str]:
+    """
+    Locate an executable in the system PATH.
+
+    Args:
+        program: Name of the executable to find.
+
+    Returns:
+        Full path to the executable if found, None otherwise.
+
+    Note:
+        Based on harmv's StackOverflow answer:
+        http://stackoverflow.com/questions/377017/test-if-executable-exists-in-python
+    """
+    def is_exe(fpath: str) -> bool:
         return os.path.isfile(fpath) and os.access(fpath, os.X_OK)
 
     fpath, fname = os.path.split(program)
@@ -27,7 +56,7 @@ def which(program):
         if is_exe(program):
             return program
     else:
-        for path in os.environ["PATH"].split(os.pathsep):
+        for path in os.environ.get("PATH", "").split(os.pathsep):
             path = path.strip('"')
             exe_file = os.path.join(path, program)
             if is_exe(exe_file):
@@ -35,23 +64,66 @@ def which(program):
 
     return None
 
-class mesher():
 
-    def __init__(self, casePath, stlSolid, nprocs=None, baseCellSize=0.25, parserArgs=None):
-        self.casePath = casePath
+class mesher:
+
+    """
+    Manages mesh generation for OpenFOAM CFD simulations.
+
+    This class handles the complete meshing workflow:
+    - Base domain generation with blockMesh
+    - Geometry refinement with snappyHexMesh
+    - Parallel mesh generation support
+
+    Attributes:
+        casePath: Path to the OpenFOAM case directory.
+        stlSolid: STL geometry object containing aircraft mesh.
+        baseCellSize: Base cell size for mesh generation (meters).
+        parallel: Whether to use parallel processing.
+        nprocs: Number of processors to use.
+    """
+
+    def __init__(
+        self,
+        casePath: str | Path,
+        stlSolid,
+        nprocs: Optional[int] = None,
+        baseCellSize: float = 0.25,
+        parserArgs=None
+    ) -> None:
+        """
+        Initialize the mesher with case and geometry information.
+
+        Args:
+            casePath: Path to the OpenFOAM case directory.
+            stlSolid: STL solid object containing the geometry.
+            nprocs: Number of processors for parallel processing (optional).
+            baseCellSize: Base cell size for mesh generation in meters.
+            parserArgs: Command-line parser arguments (optional).
+        """
+        self.casePath = Path(casePath)
         self.stlSolid = stlSolid
         self.procsUtil = Utilities.parallelUtilities(nprocs)
         self.baseCellSize = baseCellSize
+
+        # Configure parallel processing
         if self.procsUtil.procs > 1:
             self.parallel = True
             self.nprocs = self.procsUtil.procs
         else:
             self.parallel = False
             self.nprocs = 1
-        ## Load in blockMeshDict
-        self.blockMeshDict = ParsedParameterFile(os.path.join(casePath,'constant','polyMesh','blockMeshDict'))
-        self.snappyHexMeshDict = ParsedParameterFile(os.path.join(casePath,'system','snappyHexMeshDict'))
-        self.decomposeParDict = ParsedParameterFile(os.path.join(casePath,'system','decomposeParDict'))
+
+        # Load OpenFOAM dictionary files
+        self.blockMeshDict = ParsedParameterFile(
+            str(self.casePath / 'constant' / 'polyMesh' / 'blockMeshDict')
+        )
+        self.snappyHexMeshDict = ParsedParameterFile(
+            str(self.casePath / 'system' / 'snappyHexMeshDict')
+        )
+        self.decomposeParDict = ParsedParameterFile(
+            str(self.casePath / 'system' / 'decomposeParDict')
+        )
 
     def blockMeshDomain(self):
         x_verts = []
@@ -122,8 +194,8 @@ class mesher():
         self.snappyHexMeshDict['castellatedMeshControls']['refinementRegions']['downwindbox']['mode']='inside'
         self.snappyHexMeshDict['castellatedMeshControls']['refinementRegions']['downwindbox']['levels'] = [[1,4]]
         self.snappyHexMeshDict['castellatedMeshControls']['locationInMesh'][0] = dwBox['min'][0]
-	self.snappyHexMeshDict['castellatedMeshControls']['locationInMesh'][1] = dwBox['min'][1]
-	self.snappyHexMeshDict['castellatedMeshControls']['locationInMesh'][2] = dwBox['min'][2]
+        self.snappyHexMeshDict['castellatedMeshControls']['locationInMesh'][1] = dwBox['min'][1]
+        self.snappyHexMeshDict['castellatedMeshControls']['locationInMesh'][2] = dwBox['min'][2]
 
         ## Next we add some refinement regions around the wing tips
         self.snappyHexMeshDict['geometry']['wingtip1'] = {}
@@ -164,9 +236,9 @@ class mesher():
             Runner(args=['--silent',"decomposePar","-force","-case",self.casePath])
 
             ## Then run snappyHexMesh to build our final mesh for the simulation, also in parallel
-            print "Starting snappyHexMesh"
-            # Runner(args=['--silent', "--proc=%s"%self.nprocs,"snappyHexMesh","-overwrite","-case",self.casePath])
-            Runner(args=["--proc=%s"%self.nprocs,"snappyHexMesh","-overwrite","-case",self.casePath])
+            print("Starting snappyHexMesh")
+            # Runner(args=['--silent', "--proc=%s"%self.nprocs,"snappyHexMesh","-overwrite","-case",str(self.casePath)])
+            Runner(args=[f"--proc={self.nprocs}","snappyHexMesh","-overwrite","-case",str(self.casePath)])
             ## Finally, we combine the mesh back into a single mesh. This allows us to decompose it more intelligently for simulation
 
             Runner(args=['--silent', "reconstructParMesh","-constant","-case",self.casePath])
@@ -174,25 +246,33 @@ class mesher():
             ## No parallel? Ok, lets just run snappyHexMesh
             Runner(args=['--silent' ,"snappyHexMesh","-overwrite","-case",self.casePath])
 
-    def previewMesh(self):
-        '''
-        Utility function that simply opens the simulation in paraview
-        '''
+    def previewMesh(self) -> None:
+        """
+        Open the mesh in ParaView for visual inspection.
+
+        This utility function launches ParaView to visualize the generated mesh.
+
+        Raises:
+            RuntimeWarning: If ParaView is not found in the system PATH.
+        """
         if not which('paraview'):
-            print 'Could not find paraview'
+            print('Warning: Could not find paraview in system PATH')
             return
-        os.system('paraview %s'%(os.path.join(self.casePath, 'openme.foam')))
+
+        foam_file = self.casePath / 'openme.foam'
+        os.system(f'paraview {foam_file}')
 
 if __name__=='__main__':
+    # Example usage
     import stlTools
     import time
     import Utilities
     Utilities.caseSetup('test')
-    stlSolid = stlTools.SolidSTL('../test_dir/benchmarkAircraft.stl')
+    stlSolid = stlTools.solidSTL('../test_dir/benchmarkAircraft.stl')
     stlSolid.setaoa(5, units='degrees')
-    stlSolid.saveSTL('test/constant/triSurface/benchmarkAircraft.stl')
-    print stlSolid.bb
-    a = mesher('test', stlSolid,baseCellSize=0.31)
+    stlSolid.save('test/constant/triSurface/benchmarkAircraft.stl')
+    print(f"Bounding box: {stlSolid.bb}")
+    a = mesher('test', stlSolid, baseCellSize=0.31)
     a.blockMesh()
     a.snappyHexMesh()
     a.previewMesh()

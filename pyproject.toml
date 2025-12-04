@@ -1,0 +1,81 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "droneCFD"
+version = "0.2.0"
+description = "A virtual wind tunnel based on OpenFOAM and PyFOAM"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "GPL-2.0-or-later"}
+authors = [
+    {name = "Chris Paulson", email = "dronecfd@gmail.com"}
+]
+keywords = ["cfd", "wind tunnel", "uav", "uas", "suas", "openfoam", "computational fluid dynamics"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Education",
+    "License :: OSI Approved :: GNU General Public License v2 or later (GPLv2+)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+
+dependencies = [
+    "XlsxWriter>=3.1.9",
+    "numpy>=1.26.0",
+    "numpy-stl>=3.1.0",
+    "PyFoam>=2022.9",
+    "matplotlib>=3.8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.7.0",
+]
+visualization = [
+    "plotly>=5.18.0",
+    "vtk>=9.3.0",
+]
+
+[project.urls]
+Homepage = "http://www.dronecfd.com"
+Repository = "https://github.com/dronecfd/droneCFD"
+
+[project.scripts]
+dcCheck = "scripts.dcCheck:main"
+dcRun = "scripts.dcRun:main"
+dcPostProcess = "scripts.dcPostProcess:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["droneCFD*"]
+
+[tool.setuptools.package-data]
+"droneCFD.data" = ["**/*"]
+
+[tool.black]
+line-length = 100
+target-version = ['py39', 'py310', 'py311', 'py312']
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+select = ["E", "F", "W", "I", "N", "UP"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false

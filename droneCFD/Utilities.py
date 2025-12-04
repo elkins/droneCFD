@@ -1,3 +1,16 @@
+"""
+Utility functions and classes for droneCFD case setup and management.
+
+This module provides utilities for:
+- Setting up OpenFOAM case directories from templates
+- Managing geometry files
+- Detecting and utilizing parallel processing capabilities
+
+Classes:
+    caseSetup: Manages OpenFOAM case directory setup.
+    parallelUtilities: Manages parallel processing configuration.
+"""
+
 ##########################################################################################
 ##  _______  .______        ______   .__   __.  _______      ______  _______  _______   ##
 ## |       \ |   _  \      /  __  \  |  \ |  | |   ____|    /      ||   ____||       \  ##
@@ -7,106 +20,200 @@
 ## |_______/ | _| `._____| \______/  |__| \__| |_______|    \______||__|     |_______/  ##
 ##                                                                                      ##
 ##########################################################################################
+
 __author__ = 'chrispaulson'
 
 import shutil
 import os
-# import PyFoam.Basics.STLFile as pySTL
-import stlTools
+from pathlib import Path
+from typing import Optional
 import multiprocessing
+from . import stlTools
 
-## Utilities is responsible for setting up our test directory
 
-class caseSetup():
-    def __init__(self, folderPath, geometryPath=None, templatePath=None, parserArgs=None):
+class caseSetup:
+    """
+    Manages OpenFOAM case directory setup.
 
-        ##Check if this gets args from the droneCFD_Run command
-        if parserArgs:
+    This class handles:
+    - Creating case directories from templates
+    - Setting up geometry files
+    - Organizing the OpenFOAM directory structure
+
+    Attributes:
+        dir: Absolute path to the case directory.
+        templatePath: Path to the template directory.
+        stlPath: Path to the STL geometry file in the case.
+        triSurface: Relative path to triSurface directory.
+        system: Relative path to system directory.
+        polyMesh: Relative path to polyMesh directory.
+    """
+
+    def __init__(
+        self,
+        folderPath: str | Path,
+        geometryPath: Optional[str | Path] = None,
+        templatePath: Optional[str | Path] = None,
+        parserArgs=None
+    ) -> None:
+        """
+        Initialize case setup and create directory structure.
+
+        Args:
+            folderPath: Path where the case directory should be created.
+            geometryPath: Path to the STL geometry file (optional).
+            templatePath: Path to the OpenFOAM case template (optional).
+            parserArgs: Command-line parser arguments (optional).
+
+        Raises:
+            ValueError: If folderPath is None.
+            FileNotFoundError: If template or geometry paths don't exist.
+        """
+        # Check if arguments come from command-line parser
+        if parserArgs and hasattr(parserArgs, 'geometryPath'):
             geometryPath = parserArgs.geometryPath
 
-        ## Double check that a destination folder is set
+        # Validate folder path
         if folderPath is None:
-            print 'Please specify a folder path, exiting...'
-            exit()
+            raise ValueError('Please specify a folder path')
 
+        # Set template path
         if templatePath is None:
-            self.templatePath = os.path.dirname(__file__)+'/data/template'
-            print 'Template File Path is: {0}'.format(self.templatePath)
+            self.templatePath = Path(__file__).parent / 'data' / 'template'
+            print(f'Template File Path: {self.templatePath}')
+        else:
+            self.templatePath = Path(templatePath)
 
+        # Set default geometry if not provided
         if geometryPath is None:
-            ## Default to the base geometry
-            geometryPath = os.path.dirname(__file__)+'/data/geometries/benchmarkAircraft.stl'
+            geometryPath = Path(__file__).parent / 'data' / 'geometries' / 'benchmarkAircraft.stl'
 
-        ## Since the path exists, lets make sure that folder doesn't exist
-        #TODO: Don't just delete a folder without asking for permission
-        self.dir = os.path.abspath(folderPath)
-        if os.path.isdir(self.dir): shutil.rmtree(self.dir)
+        # Setup case directory (remove if exists)
+        self.dir = Path(folderPath).absolute()
+        if self.dir.is_dir():
+            print(f'Warning: Removing existing directory: {self.dir}')
+            shutil.rmtree(self.dir)
 
-        ## A few paths that will be useful later on
-        self.triSurface = os.path.join('constant','triSurface')
-        self.system = os.path.join('system')
-        self.polyMesh = os.path.join('polyMesh')
+        # Define useful directory paths
+        self.triSurface = Path('constant') / 'triSurface'
+        self.system = Path('system')
+        self.polyMesh = Path('polyMesh')
 
-        ## Now, copy the template directory into our new file location
-        ## The template path is hard coded for now, but you can opt to introduce your own
-        # self.templatePath = os.path.abspath(templatePath)
+        # Copy template directory
         self.copyTemplate(self.templatePath)
 
-        ## Set geometry if supplied, move it into place
+        # Set geometry if supplied
         if geometryPath:
-            self.geometryPath = os.path.abspath(geometryPath)
+            self.geometryPath = Path(geometryPath).absolute()
             self.setGeometry(self.geometryPath)
 
 
-    def copyTemplate(self, path):
-        if not os.path.isdir(path):
-            print 'The template path %s is missing. Please check the location and try again, exiting...'%path
-            exit()
-        if not os.path.isdir(os.path.join(path, self.triSurface)) and os.path.isdir(os.path.join(path, self.system)):
-            print 'Template is not of the correct form. Please check. Exiting...'
-            exit()
-        ## Transfer the template directory into place
-        shutil.copytree(path,self.dir)
-        self.templatePath = path
+    def copyTemplate(self, path: Path) -> None:
+        """
+        Copy the OpenFOAM case template to the case directory.
 
-    def setGeometry(self, path):
+        Args:
+            path: Path to the template directory.
+
+        Raises:
+            FileNotFoundError: If template path doesn't exist.
+            ValueError: If template structure is invalid.
+        """
+        if not path.is_dir():
+            raise FileNotFoundError(
+                f'Template path {path} is missing. Please check the location.'
+            )
+
+        # Validate template structure
+        tri_surface_path = path / self.triSurface
+        system_path = path / self.system
+        if not (tri_surface_path.is_dir() or system_path.is_dir()):
+            raise ValueError(
+                'Template is not of the correct form. Must contain constant/triSurface and system directories.'
+            )
+
+        # Copy template directory
+        shutil.copytree(path, self.dir)
+        print(f'Copied template from {path} to {self.dir}')
+
+    def setGeometry(self, path: Path) -> None:
+        """
+        Set and validate the geometry file for the case.
+
+        Args:
+            path: Path to the STL geometry file.
+
+        Raises:
+            FileNotFoundError: If geometry file doesn't exist.
+            ValueError: If STL file is invalid.
+        """
         self.geo_base_path = path
-        ## Double check that this is actually a file
-        if not os.path.isfile(self.geo_base_path):
-            print 'Geometry missing... Exiting... '
-            exit()
 
-        ## Now parse the STL file to double check that it's valid, we'll need this data later anyway
+        # Validate file exists
+        if not path.is_file():
+            raise FileNotFoundError(f'Geometry file missing: {path}')
+
+        # Validate STL file by attempting to load it
         try:
             stl_file = stlTools.solidSTL(self.geo_base_path)
-        except:
-            print 'droneCFD encountered an error with the STL file. Please check the file and try again'
-            exit()
-        #shutil.copy(path, os.path.join(self.dir, self.triSurface))
-        #self.stlPath = os.path.join(self.dir, self.triSurface, os.path.basename(self.geo_base_path))
-        #Rename the stl geometry to work with the OpenFoam Template
-        #shutil.move(self.stlPath, os.path.join(self.dir, self.triSurface, 'Aircraft.stl'))
-        self.stlPath = os.path.join(self.dir, self.triSurface, 'Aircraft.stl')
+        except Exception as e:
+            raise ValueError(
+                f'droneCFD encountered an error with the STL file: {e}'
+            ) from e
+
+        # Set the standard STL path for OpenFOAM template
+        self.stlPath = self.dir / self.triSurface / 'Aircraft.stl'
+        print(f'Geometry set to: {self.stlPath}')
 
 
-class parallelUtilities():
-    def __init__(self, procs=None):
-        if not procs:
-            print 'Evaluating computation hardware'
+class parallelUtilities:
+    """
+    Manages parallel processing configuration for CFD simulations.
+
+    This class detects available CPU cores and configures the number
+    of processes to use for parallel OpenFOAM simulations.
+
+    Attributes:
+        procs: Number of processor cores to use.
+    """
+
+    def __init__(self, procs: Optional[int] = None) -> None:
+        """
+        Initialize parallel utilities with processor count.
+
+        Args:
+            procs: Number of processors to use. If None, uses all available cores.
+
+        Raises:
+            ValueError: If procs is less than 1.
+        """
+        if procs is None:
+            print('Evaluating computation hardware')
             self.procs = multiprocessing.cpu_count()
         else:
-            print 'Running on user specified number of processors'
+            if procs < 1:
+                raise ValueError('Number of processors must be at least 1')
+
+            print('Running on user specified number of processors')
             self.procs = procs
-            if self.procs > multiprocessing.cpu_count():
-                print 'Warning: Number of requested cores is greater than the local core count'
-        print "Using %s processors for computation"%self.procs
+
+            available_cores = multiprocessing.cpu_count()
+            if self.procs > available_cores:
+                print(
+                    f'Warning: Requested {self.procs} cores, but only '
+                    f'{available_cores} available'
+                )
+
+        print(f"Using {self.procs} processors for computation")
 
 
-
-if __name__=='__main__':
+if __name__ == '__main__':
+    # Example usage
+    print("Testing parallelUtilities:")
     a = parallelUtilities()
     b = parallelUtilities(procs=1)
-    b = parallelUtilities(procs=2)
-    b = parallelUtilities(procs=4)
+    c = parallelUtilities(procs=2)
+    d = parallelUtilities(procs=4)
 
+    print("\nTesting caseSetup:")
     # u = caseSetup(folderPath='test', geometryPath='../test_dir/benchmarkAircraft.stl')
